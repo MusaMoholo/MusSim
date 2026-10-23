@@ -13,11 +13,15 @@ export async function start(boot){
  const input=panel.querySelector('#mussim-file'),button=panel.querySelector('#mussim-import'),status=panel.querySelector('#mussim-data-status'),error=panel.querySelector('#mussim-import-error'),progress=panel.querySelector('progress');
  button.disabled=true;
  button.onclick=()=>input.click();
- input.onchange=async()=>{const file=input.files?.[0];if(!file)return;button.disabled=true;error.hidden=true;progress.hidden=false;status.textContent='Importing… keep MusSim open until this finishes.';try{
-   const result=await importBundle(file,({count,megabytes})=>{status.textContent=`Importing… ${count.toLocaleString()} records · ${megabytes.toFixed(0)} MB unpacked`;});
+ let importing=false,wake;
+ const keepAwake=async()=>{if(importing&&document.visibilityState==='visible')try{wake=await navigator.wakeLock?.request('screen');}catch{}};
+ document.addEventListener('visibilitychange',keepAwake);
+ input.onchange=async()=>{const file=input.files?.[0];if(!file)return;button.disabled=true;importing=true;await keepAwake();error.hidden=true;progress.hidden=false;status.textContent='Importing… keep MusSim open and the screen unlocked until this finishes.';try{
+   const result=await importBundle(file,({count,savedMegabytes,added,reused})=>{status.textContent=`Importing… ${count.toLocaleString()} checked · ${added.toLocaleString()} new · ${reused.toLocaleString()} reused · ${savedMegabytes.toFixed(0)} MB added. Keep MusSim open and unlocked.`;});
    await navigator.storage?.persist?.().catch(()=>false);
    status.textContent=`Imported ${result.latest}. Opening dashboard…`;button.disabled=false;location.reload();
-  }catch(e){error.textContent=e.name==='QuotaExceededError'?'Not enough device storage. Your previous import is unchanged. Free some space and try again.':e.message;error.hidden=false;status.textContent='Import failed. Any previous data is still available.';button.disabled=false;progress.hidden=true;input.value='';}
+  }catch(e){error.textContent=e.name==='QuotaExceededError'?'Not enough device storage. Your previous import is unchanged. Free some space and try again.':`${e.message} (${e.name||'Error'}). Any previous import is unchanged.`;error.hidden=false;status.textContent='Import failed. Any previous data is still available.';button.disabled=false;progress.hidden=true;input.value='';}
+  finally{importing=false;await wake?.release().catch(()=>{});wake=null;}
  };
  window.addEventListener('beforeunload',e=>{if(button.disabled){e.preventDefault();e.returnValue='';}});
  let active;

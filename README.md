@@ -24,6 +24,12 @@ keep the source bundle as a backup because browser storage can be cleared. Chart
 scroll inside their panels. Touch marks show values on the first tap and their linked action on
 the second. Live forecasts and Scenario Lab computations remain laptop/Python operations.
 
+Keep MusSim open and the screen unlocked while importing; the app requests a screen wake lock
+where supported. New exports contain precompressed records to reduce phone processing and storage.
+Imports check the complete bundle but save only new or changed content, reusing existing records.
+The previous complete dataset remains available if an update fails. Older bundles remain readable;
+an older installation builds the reusable storage layout on its first successful updated import.
+
 ## Laptop setup
 
 Use Python3.12 or newer and a virtual environment:
@@ -59,6 +65,9 @@ This runs the normal nightly pipeline and, after success, exports a complete bro
 file using **Import data** in each PWA. There is no separate manual export/copy step, and no
 scheduler is installed by this command. Usual nightly options can follow the command;
 `--output` optionally chooses another export destination. Failed/dry runs preserve the last export.
+
+The iCloud file stays complete so devices can catch up after missing nights. Its transfer/read
+size grows with retained history; only the app's new/changed payload writes are incremental.
 
 To export existing retained data without running collection or simulation:
 

@@ -36,6 +36,75 @@ def packed(value):
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
 
 
+def portable_record(record):
+    """Compress large records on the laptop so phones need not unpack/repack them."""
+    body = record['body'].encode()
+    assert hashlib.sha256(body).hexdigest() == record['sha256']
+    if len(body) <= 1024:
+        return record
+    compressed = gzip.compress(body, compresslevel=6, mtime=0)
+    return {**{k: v for k, v in record.items() if k != 'body'},
+            'body_gzip': base64.b64encode(compressed).decode(),
+            'packed_sha256': hashlib.sha256(compressed).hexdigest()}
+
+
+def checked_body(record):
+    if 'body_gzip' in record:
+        compressed = base64.b64decode(record['body_gzip'], validate=True)
+        assert hashlib.sha256(compressed).hexdigest() == record['packed_sha256']
+        body = gzip.decompress(compressed)
+    else:
+        body = record['body'].encode()
+    assert hashlib.sha256(body).hexdigest() == record['sha256']
+    return body
+
+
+def repack_bundle(source, output, archive_root=None):
+    """Upgrade an existing verified export without reading production data."""
+    output = Path(output).expanduser().resolve()
+    if not output.name.endswith('.mussim.gz') or output.is_relative_to(ROOT / 'data'):
+        raise ValueError('Choose a .mussim.gz destination outside production data.')
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if output.exists():
+        from scripts.ops_storage import archive_paths
+        archive_paths([output], archive_root)
+    descriptor, staging = tempfile.mkstemp(prefix='.mussim-', suffix='.partial', dir=output.parent)
+    os.close(descriptor)
+    try:
+        count, ended = 0, False
+        with gzip.open(source, 'rt', encoding='utf-8') as old, gzip.open(staging, 'wt', encoding='utf-8', compresslevel=6) as new:
+            header = json.loads(next(old))
+            assert header['format'] == 'mussim' and header['version'] in (1, 2)
+            new.write(packed({**header, 'version': 2}) + '\n')
+            for line in old:
+                assert not ended
+                record = json.loads(line)
+                if record.get('end'):
+                    assert record['records'] == count
+                    ended = True
+                else:
+                    body = checked_body(record).decode()
+                    record = portable_record({**{k: v for k, v in record.items() if k not in ('body_gzip', 'packed_sha256')}, 'body': body})
+                    count += 1
+                new.write(packed(record) + '\n')
+            assert ended
+        # Verify every rewritten payload before replacing the previous export.
+        with gzip.open(staging, 'rt', encoding='utf-8') as check:
+            assert json.loads(next(check))['version'] == 2
+            actual = 0
+            for line in check:
+                record = json.loads(line)
+                if record.get('end'):
+                    assert record['records'] == actual == count
+                else:
+                    checked_body(record)
+                    actual += 1
+        os.replace(staging, output)
+        print(f'Repacked: {output} · {count:,} unchanged records · {output.stat().st_size / 1e6:.1f} MB', flush=True)
+    finally:
+        Path(staging).unlink(missing_ok=True)
+
+
 def context_projection(p):
     """Only the fields read by Match Centre's retained pre/post-match context adapter.
 
@@ -181,7 +250,7 @@ def write_bundle(output, source, dates=None):
     count, seen = 0, set()
     descriptor, staging = tempfile.mkstemp(prefix='.mussim-', suffix='.partial', dir=output.parent)
     os.close(descriptor)
-    header = {'format': 'mussim', 'version': 1, 'created': datetime.now(timezone.utc).isoformat(),
+    header = {'format': 'mussim', 'version': 2, 'created': datetime.now(timezone.utc).isoformat(),
               'latest': selected[-1]['date'], 'snapshots': [r['date'] for r in selected]}
     try:
         with gzip.open(staging, 'wt', encoding='utf-8', compresslevel=6) as stream:
@@ -195,7 +264,7 @@ def write_bundle(output, source, dates=None):
                 body = base64.b64encode(value).decode() if binary else packed(value)
                 record = {'key': key, 'body': body, 'status': status, 'type': content_type, 'binary': binary,
                           'sha256': hashlib.sha256(body.encode()).hexdigest()}
-                stream.write(packed(record) + '\n')
+                stream.write(packed(portable_record(record)) + '\n')
                 count += 1
 
             def optional(key, value):
@@ -266,7 +335,7 @@ def write_bundle(output, source, dates=None):
                 if item.get('end'):
                     assert item['records'] == actual == count
                 else:
-                    assert hashlib.sha256(item['body'].encode()).hexdigest() == item['sha256']; actual += 1
+                    checked_body(item); actual += 1
         os.replace(staging, output)
         print(f'Bundle: {output} · {count:,} records · {output.stat().st_size / 1e6:.1f} MB', flush=True)
         return header
@@ -279,16 +348,22 @@ def main():
     parser.add_argument('--shell', type=Path, help='Build data-free PWA into a new/empty directory')
     parser.add_argument('--base-path', default='/', help='Hosting directory, e.g. /MusSim/ for GitHub Pages')
     parser.add_argument('--output', type=Path, help='Write .mussim.gz data bundle; iCloud Drive is supported')
+    parser.add_argument('--repack', type=Path, help='Upgrade an existing export for phone import; requires --output, reads no production data')
     parser.add_argument('--source', type=Path, default=ROOT)
     parser.add_argument('--archive-root', type=Path, help='Override archive root (tests/review only)')
     parser.add_argument('--date', action='append', help='Limit browsing dates; all history remains available')
     args = parser.parse_args()
+    if args.repack and (not args.output or args.date):
+        parser.error('--repack requires --output and cannot use --date')
     if not args.shell and not args.output:
         parser.error('Provide --shell and/or --output')
     if args.shell:
         build_shell(args.shell, args.archive_root, args.base_path)
     if args.output:
-        export_bundle(args.output, args.source, args.date, args.archive_root)
+        if args.repack:
+            repack_bundle(args.repack, args.output, args.archive_root)
+        else:
+            export_bundle(args.output, args.source, args.date, args.archive_root)
 
 
 if __name__ == '__main__':
