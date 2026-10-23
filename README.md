@@ -80,9 +80,11 @@ Serve `_site` at `/MusSim/`, or build with `--base-path /` for hosting at a doma
 contains HTML, native JavaScript modules, icons, the web manifest and a service worker. Never put
 datasets or `.mussim.gz` bundles in the deployment directory.
 
-The GitHub Pages workflow builds only this app shell and deploys it from `main`. Data updates go
-through iCloud imports; app-code updates go through GitHub Pages. No ChatGPT/work account is used
-by the deployed dashboard.
+GitHub Pages serves the prebuilt shell from the `gh-pages` branch, including `.nojekyll`.
+Build app-code changes locally, commit the resulting shell to that branch and push it to publish.
+The optional manual Actions workflow is an alternative that requires selecting GitHub Actions
+in Pages settings and an account able to run Actions. Data updates go through iCloud imports;
+app-code updates go through GitHub Pages. No ChatGPT/work account is used by the dashboard.
 
 ## Code map
 

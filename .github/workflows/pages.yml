@@ -1,11 +1,8 @@
 name: Deploy MusSim PWA
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - scripts/**
-      - .github/workflows/pages.yml
+  # Optional alternative: first select GitHub Actions in Pages settings.
+  # The active deployment uses a locally built gh-pages branch with .nojekyll.
   workflow_dispatch:
 
 permissions:
