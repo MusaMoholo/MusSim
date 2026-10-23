@@ -1,0 +1,25 @@
+{
+  "id": "/MusSim/",
+  "name": "MusSim",
+  "short_name": "MusSim",
+  "description": "Match previews, club performance and season forecasts, saved for offline browsing.",
+  "start_url": "/MusSim/",
+  "scope": "/MusSim/",
+  "display": "standalone",
+  "background_color": "#11161d",
+  "theme_color": "#11161d",
+  "icons": [
+    {
+      "src": "/MusSim/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/MusSim/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
