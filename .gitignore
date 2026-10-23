@@ -1,0 +1,40 @@
+# Local environment and machine state
+/.venv/
+/.claude/
+/.codex/
+/.agents/
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Collected/derived football data and generated deployments stay on the laptop/iCloud.
+/data/
+/exports/
+/sites/
+/_site/
+/dist/
+*.mussim
+*.mussim.gz
+*.csv
+*.pkl
+*.parquet
+*.log
+*.bak
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Local owner handoffs, measured logs and machine-specific scheduling configuration
+/AGENTS.md
+/HANDOFF_NEXT.md
+/DASHBOARD_ROADMAP.md
+/DASHBOARD_PLAN.md
+/FINDINGS.md
+/analysis/README.md
+/analysis/logs/
+/scripts/schedule/

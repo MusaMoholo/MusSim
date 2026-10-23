@@ -1,0 +1,61 @@
+name: Deploy MusSim PWA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/**
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/configure-pages@v5
+      - name: Build the data-free app shell
+        env:
+          MUSSIM_REPOSITORY: ${{ github.event.repository.name }}
+        run: python scripts/export_mussim.py --shell _site --base-path "/${MUSSIM_REPOSITORY}/"
+      - name: Check the published file boundary
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          root = Path('_site')
+          manifest = json.loads((root / 'manifest.webmanifest').read_text())
+          assert manifest['name'] == 'MusSim'
+          assert manifest['scope'].startswith('/') and manifest['scope'].endswith('/')
+          for path in root.rglob('*'):
+              if path.is_file():
+                  assert path.suffix not in {'.gz', '.csv', '.pkl', '.db', '.sqlite', '.py'}, path
+                  assert path.stat().st_size < 2_000_000, path
+          assert not any(root.rglob('.git'))
+          assert not any(root.rglob('.openai'))
+          PY
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy the app
+        id: deployment
+        uses: actions/deploy-pages@v4
