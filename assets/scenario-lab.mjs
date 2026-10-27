@@ -1,6 +1,55 @@
 // Memory-only experiments. This module never replaces the dashboard's stored forecast.
 const metrics=[['points','Points'],['position','Position'],['title','Title'],['ucl','UCL'],['uel','UEL'],['uecl','UECL'],['relegation','Relegation']];
-export async function mount(root,ctx){
+// Rough points-deduction impact from stored marginals only: no server or model needed (works in the PWA).
+// Teams are drawn independently (common random numbers for both arms); the paired change is added to the stored forecast.
+export function deductionImpact(block,team,deduct,{sims=20000,seed=1}={}){
+ const teams=block.teams,n=teams.length,target=teams.findIndex(t=>t.team===team);
+ if(target<0||!teams.every(t=>t.pts?.dist?.length))return null;
+ let s=seed>>>0;const rand=()=>{s=(s+0x6D2B79F5)>>>0;let t=s;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296;};
+ const cdf=teams.map(t=>{const total=t.pts.dist.reduce((a,b)=>a+b,0);let c=0;return t.pts.dist.map(p=>c+=p/total);});
+ const draw=i=>{const u=rand(),c=cdf[i];let k=0;while(k<c.length-1&&c[k]<u)k++;return k+teams[i].pts.offset;};
+ const lo=n-(block.relegated||0),ucl=block.ucl_spots||0;
+ const arms=[0,1].map(()=>({title:new Float64Array(n),top4:new Float64Array(n),ucl:new Float64Array(n),releg:new Float64Array(n),pos:new Float64Array(n),dist:teams.map(()=>new Float64Array(n))}));
+ const pts=new Float64Array(n),tie=new Float64Array(n),key=new Float64Array(n),order=new Array(n);
+ for(let w=0;w<sims;w++){
+  for(let i=0;i<n;i++){pts[i]=draw(i);tie[i]=((teams[i].gd?.mean??0)+30*(rand()-.5))/1000;}
+  for(let a=0;a<2;a++){
+   for(let i=0;i<n;i++){key[i]=pts[i]-(a&&i===target?deduct:0)+tie[i];order[i]=i;}
+   order.sort((x,y)=>key[y]-key[x]);const arm=arms[a];
+   for(let r=0;r<n;r++){const i=order[r];arm.pos[i]+=r+1;arm.dist[i][r]++;if(r===0)arm.title[i]++;if(r<4)arm.top4[i]++;if(r<ucl)arm.ucl[i]++;if(r>=lo)arm.releg[i]++;}
+  }
+ }
+ const clamp=v=>Math.min(1,Math.max(0,v)),rows=teams.map((t,i)=>{
+  const d=k=>(arms[1][k][i]-arms[0][k][i])/sims,own=i===target,
+   position=Math.min(n,Math.max(1,t.mean_pos+d('pos'))),p=(base,k)=>({baseline:base??0,scenario:arms[1][k][i]===0?0:arms[1][k][i]===sims?1:clamp((base??0)+d(k))});
+  return{team:t.team,target:own,points:{baseline:t.mean_pts,scenario:t.mean_pts-(own?deduct:0)},position:{baseline:t.mean_pos,scenario:position},
+   title:p(t.p_win,'title'),top4:p(t.p_top4,'top4'),ucl:ucl?p(t.p_ucl,'ucl'):null,releg:p(t.p_releg,'releg')};
+ });
+ return{sims,rows:rows.sort((a,b)=>a.position.scenario-b.position.scenario),uclSpots:ucl};
+}
+function mountDeduction(root,ctx){
+ const {esc,block}=ctx,teams=block?.teams||[];
+ if(!teams.length||!teams.every(t=>t.pts?.dist?.length))return;
+ const saved=ctx.deduction||{};let team=teams.some(t=>t.team===saved.team)?saved.team:(teams.find(t=>/^Man(chester)? City$/.test(t.team))||teams[0]).team,points=Number.isInteger(saved.points)?saved.points:10;
+ const pct=(v,delta)=>{const x=Number((v*100).toFixed(1));return(delta&&x>0?'+':'')+x.toFixed(1)+(delta?' pp':'%');};
+ const num=(v,delta)=>{const x=Number(v.toFixed(1));return(delta&&x>0?'+':'')+x.toFixed(1);};
+ const cell=(m,fmt)=>m?`<td>${fmt(m.baseline)}</td><td>${fmt(m.scenario)}</td><td>${fmt(m.scenario-m.baseline,true)}</td>`:'<td colspan="3">—</td>';
+ function draw(){
+  const impact=deductionImpact(block,team,points);if(!impact)return;const own=impact.rows.find(r=>r.target);
+  const head=['Title','Top 4',...(impact.uclSpots?[`Top ${impact.uclSpots}`]:[]),'Relegation'];
+  root.innerHTML=`<div class="panel"><h2>Points deduction</h2><p class="note">Pick a club and a deduction to see a rough effect on this season's forecast. Runs on this device from the stored forecast, so it also works offline in MusSim.</p>
+  <div class="row scenario-controls"><div><label for="deduct-team">Club</label><select id="deduct-team">${teams.map(t=>`<option value="${esc(t.team)}"${t.team===team?' selected':''}>${esc(t.team)}</option>`).join('')}</select></div><div><label for="deduct-points">Points deducted</label><input id="deduct-points" type="number" inputmode="numeric" min="0" max="30" step="1" value="${points}"></div></div>
+  <p role="status"><b>${esc(team)}</b> · −${points} points · mean points ${num(own.points.baseline)} → ${num(own.points.scenario)} · mean position ${num(own.position.baseline)} → ${num(own.position.scenario)} · title ${pct(own.title.baseline)} → ${pct(own.title.scenario)} · relegation ${pct(own.releg.baseline)} → ${pct(own.releg.scenario)}</p>
+  <div class="scroll" tabindex="0" role="region" aria-label="Points deduction comparison"><table><thead><tr><th class="team">Team</th><th colspan="3">Mean points</th><th colspan="3">Mean position</th>${head.map(h=>`<th colspan="3">${h}</th>`).join('')}</tr><tr><th></th>${head.concat(['Points','Position']).map(()=>'<th>Base</th><th>New</th><th>Δ</th>').join('')}</tr></thead><tbody>${impact.rows.map(r=>`<tr${r.target?' class="hl"':''}><td class="team">${esc(r.team)}</td>${cell(r.points,num)}${cell(r.position,num)}${cell(r.title,pct)}${cell(r.top4,pct)}${impact.uclSpots?cell(r.ucl,pct):''}${cell(r.releg,pct)}</tr>`).join('')}</tbody></table></div>
+  <details><summary>Method</summary><p class="note">Each club's finishing points are drawn independently from its stored forecast distribution (${impact.sims.toLocaleString()} seasons, fixed seed), with and without the deduction, ties broken by forecast goal difference. The paired change is added to the stored forecast. Rough guide only: it ignores that one club's results affect its rivals, and applies the deduction in full from today. Not a published forecast.</p></details></div>`;
+  root.querySelector('#deduct-team').onchange=e=>{team=e.target.value;ctx.onDeduction?.({team,points});draw();root.querySelector('#deduct-team').focus({preventScroll:true});};
+  root.querySelector('#deduct-points').onchange=e=>{const v=Math.round(Number(e.target.value));points=Number.isFinite(v)?Math.min(100,Math.max(0,v)):0;ctx.onDeduction?.({team,points});draw();root.querySelector('#deduct-points').focus({preventScroll:true});};
+ }
+ draw();
+}
+export async function mount(host,ctx){
+ host.innerHTML='<div id="deduction-host"></div><div id="sim-host"></div>';
+ const root=host.querySelector('#sim-host');mountDeduction(host.querySelector('#deduction-host'),ctx);
  const {esc,fixtureHtml,definition={},job:initialJob='',onState}=ctx;
  let disposed=false,timer,cat,job=definition.competition&&definition.competition!==ctx.competition?'':initialJob,running=false,result=null,metric='points',jobLoaded=false;
  let conditions=Array.isArray(definition.conditions)?definition.conditions.map(c=>({...c})):[],worlds=definition.worlds||5000,seed=definition.seed??1;
