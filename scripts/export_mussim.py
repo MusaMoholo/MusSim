@@ -16,6 +16,7 @@ import os
 import re
 from pathlib import Path
 import shutil
+import stat
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -34,6 +35,15 @@ WEB = ROOT / 'scripts/webapp'
 
 def packed(value):
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
+
+
+def publish_export(staging, output):
+    """Atomically publish the bundle and keep it visible in macOS file pickers."""
+    os.replace(staging, output)
+    # iCloud may retain the hidden flag from a dot-prefixed staging file on rename.
+    flags = getattr(output.stat(), 'st_flags', 0)
+    if hasattr(os, 'chflags') and flags & stat.UF_HIDDEN:
+        os.chflags(output, flags & ~stat.UF_HIDDEN)
 
 
 def portable_record(record):
@@ -99,7 +109,7 @@ def repack_bundle(source, output, archive_root=None):
                 else:
                     checked_body(record)
                     actual += 1
-        os.replace(staging, output)
+        publish_export(staging, output)
         print(f'Repacked: {output} · {count:,} unchanged records · {output.stat().st_size / 1e6:.1f} MB', flush=True)
     finally:
         Path(staging).unlink(missing_ok=True)
@@ -336,7 +346,7 @@ def write_bundle(output, source, dates=None):
                     assert item['records'] == actual == count
                 else:
                     checked_body(item); actual += 1
-        os.replace(staging, output)
+        publish_export(staging, output)
         print(f'Bundle: {output} · {count:,} records · {output.stat().st_size / 1e6:.1f} MB', flush=True)
         return header
     finally:
